@@ -1,0 +1,545 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-pvc
+  namespace: gitea
+spec:
+  storageClassName: 'microk8s-hostpath'
+  volumeMode: Filesystem
+  accessModes:
+   - ReadWriteOnce
+  resources:
+    requests:
+      storage: 16Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: gitea
+spec:
+  storageClassName: 'microk8s-hostpath'
+  volumeMode: Filesystem
+  accessModes:
+   - ReadWriteOnce
+  resources:
+    requests:
+      storage: 16Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: gitea
+spec:
+  storageClassName: 'microk8s-hostpath'
+  volumeMode: Filesystem
+  accessModes:
+   - ReadWriteOnce
+  resources:
+    requests:
+      storage: 32Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gitea-pvc
+  namespace: gitea
+spec:
+  storageClassName: 'microk8s-hostpath'
+  volumeMode: Filesystem
+  accessModes:
+   - ReadWriteOnce
+  resources:
+    requests:
+      storage: 32Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gitea-ssh-pvc
+  namespace: gitea
+spec:
+  storageClassName: 'microk8s-hostpath'
+  volumeMode: Filesystem
+  accessModes:
+   - ReadWriteOnce
+  resources:
+    requests:
+      storage: 64Ki
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: gitea
+  labels:
+    app: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+      - name: minio
+        image: minio/minio:RELEASE.2021-03-17T02-33-02Z
+        env:
+          - name: MINIO_ROOT_USER
+            value: gitea
+          - name: MINIO_ROOT_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: minio-secret
+                key: MINIO_ROOT_PASSWORD
+        args:
+          - 'server'
+          - '/data'
+        ports:
+          - containerPort: 9000
+        volumeMounts:
+          - mountPath: '/data'
+            name: minio-pv
+      volumes:
+        - name: minio-pv
+          persistentVolumeClaim:
+            claimName: minio-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: gitea
+spec:
+  selector:
+    app: minio
+  ports:
+    - protocol: TCP
+      port: 9000
+      targetPort: 9000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-stateful
+  namespace: gitea
+  labels:
+    app: redis-stateful
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-stateful
+  template:
+    metadata:
+      labels:
+        app: redis-stateful
+    spec:
+      containers:
+      - name: redis-stateful
+        image: redis:6
+        env:
+          - name: REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: redis-secret
+                key: REDIS_PASSWORD
+        args:
+          - 'redis-server'
+          - '--requirepass'
+          - '$(REDIS_PASSWORD)'
+          - '--appendonly'
+          - 'yes'
+        ports:
+          - containerPort: 6379
+        volumeMounts:
+          - mountPath: '/data'
+            name: redis-pv
+      volumes:
+        - name: redis-pv
+          persistentVolumeClaim:
+            claimName: redis-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-stateful
+  namespace: gitea
+spec:
+  selector:
+    app: redis-stateful
+  ports:
+    - protocol: TCP
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-stateless
+  namespace: gitea
+  labels:
+    app: redis-stateless
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-stateless
+  template:
+    metadata:
+      labels:
+        app: redis-stateless
+    spec:
+      containers:
+      - name: redis-stateless
+        image: redis:6
+        env:
+          - name: REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: redis-secret
+                key: REDIS_PASSWORD
+        args:
+          - 'redis-server'
+          - '--requirepass'
+          - '$(REDIS_PASSWORD)'
+        ports:
+          - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-stateless
+  namespace: gitea
+spec:
+  selector:
+    app: redis-stateless
+  ports:
+    - protocol: TCP
+      port: 6379
+      targetPort: 6379
+#-- ---
+#-- apiVersion: apps/v1
+#-- kind: Deployment
+#-- metadata:
+#--   name: elastic
+#--   namespace: gitea
+#--   labels:
+#--     app: elastic
+#-- spec:
+#--   replicas: 1
+#--   selector:
+#--     matchLabels:
+#--       app: elastic
+#--   template:
+#--     metadata:
+#--       labels:
+#--         app: elastic
+#--     spec:
+#--       initContainers:
+#--       - name: set-vm-sync-limit
+#--         image: busybox
+#--         imagePullPolicy: IfNotPresent
+#--         command: ["sysctl", "-w", "vm.max_map_count=262144"]
+#--         securityContext:
+#--           privileged: true
+#--       containers:
+#--       - name: elastic
+#--         image: elasticsearch:7.11.2
+#--         env:
+#--           - name: discovery.type
+#--             value: single-node
+#--         ports:
+#--           - containerPort: 9200
+#-- ---
+#-- apiVersion: v1
+#-- kind: Service
+#-- metadata:
+#--   name: elastic
+#-- spec:
+#--   selector:
+#--     app: elastic
+#--   ports:
+#--     - protocol: TCP
+#--       port: 9200
+#--       targetPort: 9200
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: gitea
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:13
+        env:
+          - name: POSTGRES_USER
+            value: gitea
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: postgres-secret
+                key: POSTGRES_PASSWORD
+        ports:
+          - containerPort: 5432
+        volumeMounts:
+          - mountPath: '/var/lib/postgresql/data'
+            name: postgres-pv
+      volumes:
+        - name: postgres-pv
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: gitea
+spec:
+  selector:
+    app: postgres
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gitea-config
+  namespace: gitea
+data:
+  entrypoint.sh: |
+    #!/bin/bash
+    apk add rsync
+    if [ ! -f /root/.ssh/id_rsa ]; then
+      ssh-keygen -t rsa -b 4096 -N "" -C "$HOSTNAME" -f /root/.ssh/id_rsa
+    fi
+    mkdir -p /bkp
+    cp /tmp/_backup.sh /backup.sh
+    chmod +x /backup.sh
+    rm /data/gitea/conf/app.ini
+    /usr/bin/entrypoint
+  _backup.sh: |
+    #!/bin/bash
+    if [ "$#" -ne 1 ]; then
+      echo "Usage: /backup.sh {RSYNC_DESTINATION}"
+      exit 1
+    fi
+    cd /bkp
+    gitea dump
+    rsync -avP /bkp ${1}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitea
+  namespace: gitea
+  labels:
+    app: gitea
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gitea
+  template:
+    metadata:
+      labels:
+        app: gitea
+    spec:
+      containers:
+      - name: gitea
+        image: gitea/gitea:1.14
+        env:
+          - name: DOMAIN
+            value: code.example.com
+          - name: USER_UID
+            value: '1000'
+          - name: USER_GID
+            value: '1000'
+          - name: APP_NAME
+            value: 'My Repo'
+          - name: GITEA__ui__DEFAULT_THEME
+            value: arc-green
+          - name: SSH_DOMAIN
+            value: git.example.com
+          - name: ROOT_URL
+            value: https://$(DOMAIN)/
+          - name: DISABLE_REGISTRATION
+            value: 'true'
+          - name: GITEA__service__REQUIRE_SIGNIN_VIEW
+            value: 'true'
+          - name: GITEA__service__DEFAULT_ORG_VISIBILITY
+            value: 'private'
+          - name: LFS_START_SERVER
+            value: 'true'
+          - name: DB_TYPE
+            value: postgres
+          - name: DB_HOST
+            value: $(POSTGRES_SERVICE_HOST):$(POSTGRES_SERVICE_PORT)
+          - name: DB_NAME
+            value: gitea
+          - name: DB_USER
+            value: gitea
+          - name: DB_PASSWD
+            valueFrom:
+              secretKeyRef:
+                name: postgres-secret
+                key: POSTGRES_PASSWORD
+          - name: REDIS_PASSWD
+            valueFrom:
+              secretKeyRef:
+                name: redis-secret
+                key: REDIS_PASSWORD
+          - name: GITEA__queue__TYPE
+            value: redis
+          - name: GITEA__queue__CONN_STR
+            value: redis://$(REDIS_PASSWD)@$(REDIS_STATEFUL_SERVICE_HOST):$(REDIS_STATEFUL_SERVICE_PORT)/0
+          - name: GITEA__cache__ADAPTER
+            value: redis
+          - name: GITEA__cache__HOST
+            value: redis://$(REDIS_PASSWD)@$(REDIS_STATELESS_SERVICE_HOST):$(REDIS_STATELESS_SERVICE_PORT)/0
+          - name: GITEA__session__PROVIDER
+            value: redis
+          - name: GITEA__session__PROVIDER_CONFIG
+            value: redis://$(REDIS_PASSWD)@$(REDIS_STATELESS_SERVICE_HOST):$(REDIS_STATELESS_SERVICE_PORT)/1
+#--           - name: GITEA__indexer__ISSUE_INDEXER_TYPE
+#--             value: elasticsearch
+#--           - name: GITEA__indexer__ISSUE_INDEXER_CONN_STR
+#--             value: http://elastic:changeme@$(ELASTIC_SERVICE_HOST):$(ELASTIC_SERVICE_PORT)
+#--           - name: GITEA__indexer__REPO_INDEXER_ENABLED
+#--             value: 'true'
+#--           - name: GITEA__indexer__REPO_INDEXER_TYPE
+#--             value: $(GITEA__indexer__ISSUE_INDEXER_TYPE)
+#--           - name: GITEA__indexer__REPO_INDEXER_CONN_STR
+#--             value: $(GITEA__indexer__ISSUE_INDEXER_CONN_STR)
+          - name: GITEA__storage__STORAGE_TYPE
+            value: minio
+          - name: GITEA__storage__MINIO_ENDPOINT
+            value: $(MINIO_SERVICE_HOST):$(MINIO_SERVICE_PORT)
+          - name: GITEA__storage__MINIO_ACCESS_KEY_ID
+            value: gitea
+          - name: GITEA__storage__MINIO_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: minio-secret
+                key: MINIO_ROOT_PASSWORD
+          - name: GITEA__security__INTERNAL_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: gitea-secret
+                key: INTERNAL_TOKEN
+          - name: GITEA__oauth2__JWT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: gitea-secret
+                key: JWT_SECRET
+          - name: GITEA__server__LFS_JWT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: gitea-secret
+                key: LFS_JWT_SECRET
+          - name: GITEA__security__SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: gitea-secret
+                key: SECRET_KEY
+          - name: SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: gitea-secret
+                key: SECRET_KEY
+          - name: HTTP_PORT
+            value: '3000'
+          - name: SSH_PORT
+            value: '22'
+        command:
+          - '/bin/bash'
+          - '/entrypoint.sh'
+        ports:
+          - containerPort: 3000
+          - containerPort: 22
+        volumeMounts:
+          - name: gitea-pv
+            mountPath: '/data'
+          - name: gitea-ssh-pv
+            mountPath: '/root/.ssh'
+          - name: gitea-config
+            mountPath: '/entrypoint.sh'
+            subPath: entrypoint.sh
+          - name: gitea-config
+            mountPath: '/tmp/_backup.sh'
+            subPath: _backup.sh
+      volumes:
+        - name: gitea-pv
+          persistentVolumeClaim:
+            claimName: gitea-pvc
+        - name: gitea-ssh-pv
+          persistentVolumeClaim:
+            claimName: gitea-ssh-pvc
+        - name: gitea-config
+          configMap:
+            name: gitea-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitea-http
+  namespace: gitea
+spec:
+  selector:
+    app: gitea
+  ports:
+    - name: http
+      protocol: TCP
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitea-ssh
+  namespace: gitea
+spec:
+  type: NodePort
+  selector:
+    app: gitea
+  ports:
+    - name: ssh
+      protocol: TCP
+      port: 22
+      nodePort: 32222
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gitea
+  namespace: gitea
+spec:
+  rules:
+  - host: code.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: gitea-http
+            port:
+              number: 3000
